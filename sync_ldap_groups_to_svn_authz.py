@@ -25,7 +25,7 @@ import ConfigParser, datetime, getpass, os, re, sys, tempfile, shutil
 from optparse import OptionParser
 
 try:
-  import ldap
+  import ldap,ldap.sasl
 except ImportError:
   print("Unable to locate the 'ldap' module.  Please install python-ldap.  " \
         "(http://python-ldap.sourceforge.net)")
@@ -82,6 +82,9 @@ verbose = True
 # does not mean OU recursive (which is by design)
 followgroups = False
 
+# Enables GSSAPI SASL bind
+sasl = False
+
 ################################################################################
 # Application Settings
 ################################################################################
@@ -110,6 +113,22 @@ def bind():
   return ldapobject
 
 # bind()
+
+def sasl_bind():
+  """This function will bind to the LDAP instance using GSSAPI and return an ldapobject."""
+
+  ldapobject = ldap.initialize(url)
+
+  gssapi_token = ldap.sasl.gssapi()
+
+  ldapobject.sasl_interactive_bind_s('', gssapi_token)
+
+  if verbose:
+    print("Successfully bound to %s with GSSAPI..." % url)
+
+  return ldapobject
+
+#sasl_bind()
   
 def search_for_groups(ldapobject):
   """This function will search the LDAP directory for group definitions."""
@@ -426,6 +445,7 @@ def load_cli_properties(parser):
   global authz_path
   global verbose
   global followgroups
+  global sasl
 
   (options, args) = parser.parse_args(args=None, values=None)
 
@@ -440,6 +460,7 @@ def load_cli_properties(parser):
   authz_path = options.authz_path
   verbose = options.verbose
   followgroups = options.followgroups
+  sasl = options.sasl
 
 # load_cli_properties()
 
@@ -481,6 +502,8 @@ def create_cli_parser():
                     help="The path to the authz file to update/create")
   parser.add_option("-q", "--quiet", action="store_false", dest="verbose",
                     default=True, help="Suppress logging information")
+  parser.add_option("-x", "--sasl", action="store_true", dest="sasl",
+                    default=False, help="Enable GSSAPI SASL bind")
 
   return parser
 
@@ -489,7 +512,7 @@ def create_cli_parser():
 def are_properties_set():
   """This function will perform a simple test to make sure none of the
 properties are 'None'."""
-  if (bind_dn == None):
+  if (bind_dn == None and not sasl):
     return False
   if (url == None):
     return False
@@ -515,7 +538,7 @@ def get_unset_properties():
   """This function returns a list of unset properties necessary to run."""
   unset_properties = []
 
-  if (bind_dn == None):
+  if (bind_dn == None and not sasl):
     unset_properties += ['bind-dn']
   if (url == None):
     unset_properties += ['url']
@@ -557,7 +580,7 @@ def main():
   # Allow user to type in password if missing
   global bind_password
 
-  if bind_password == None:
+  if (bind_password == None and not sasl):
     bind_password = getpass.getpass("Please provide the bind DN password: ")
 
   ldapobject = None
@@ -565,7 +588,10 @@ def main():
   memberships = None
 
   try:
-    ldapobject = bind()
+    if (sasl):
+      ldapobject = sasl_bind()
+    else:
+      ldapobject = bind()
   except ldap.LDAPError, error_message:
     print("Could not connect to %s. Error: %s " % (url, error_message))
     sys.exit(1)
